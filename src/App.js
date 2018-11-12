@@ -11,7 +11,7 @@ class App extends Component {
       activeClaim: false,
       allClaims: [{ id: '1', companyName: '', billedAmt: 0, active: true, changed: false, batchDate: '' }]
     }
-    this.eventSource = new EventSource('http://localhost:8000/claims/');
+    this.eventSource = new EventSource('http://localhost:8000/');
 
     this.handleClaimClose = claimId => {
       const { allClaims } = this.state;

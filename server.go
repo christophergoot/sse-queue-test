@@ -1,17 +1,15 @@
-// Golang HTML5 Server Side Events Example
-//
-// Run this code like:
-//  > go run server.go
-//
-// Then open up your browser to http://localhost:8000
-// Your browser must support HTML5 SSE, of course.
-
 package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
+	"time"
+
+	// "github.com/manucorporat/sse"
+	"github.com/JamesStewy/sse"
 )
 
 // Claim is my awesome sruct that is public
@@ -25,12 +23,50 @@ type Claim struct {
 }
 
 var claims []Claim
+var clients map[*sse.Client]bool
+
+// func httpHandler(w http.ResponseWriter, req *http.Request) {
+// 	// data can be a primitive like a string, an integer or a float
+// 	sse.Encode(w, sse.Event{
+// 		Event: "message",
+// 		Data:  "some data\nmore data",
+// 	})
+
+// 	// also a complex type, like a map, a struct or a slice
+// 	sse.Encode(w, sse.Event{
+// 		Id:    "124",
+// 		Event: "message",
+// 		Data: map[string]interface{}{
+// 			"user":    "manu",
+// 			"date":    time.Now().Unix(),
+// 			"content": "hi!",
+// 		},
+// 	})
+// }
+
+func eventHandler(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	// Initialise (REQUIRED)
+	client, err := sse.ClientInit(w)
+	// Return error if unable to initialise Server-Sent Events
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Add client to external variable for later use
+	clients[client] = true
+	// Remove client from external variable on exit
+	defer delete(clients, client)
+	// Run Client (REQUIRED)
+	client.Run(r.Context())
+}
 
 func enableCors(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Origin", "*")
 }
 
 func getAllClaims(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
 	json.NewEncoder(w).Encode(claims)
 }
 
@@ -57,34 +93,33 @@ func main() {
 	claims = append(claims, Claim{ID: "75d75870-ec57-4da0-a918-45e4e24f5e37", CompanyName: "Realmix", BatchDate: "2018-02-05T14:55:27Z", BilledAmt: 1476.42, Active: false})
 	claims = append(claims, Claim{ID: "995b37e8-1800-49ec-94a6-97c49ca22262", CompanyName: "Flipbug", BatchDate: "2018-05-23T03:33:54Z", BilledAmt: 4573.01, Active: false})
 
-	// http.Handle("/", http.HandlerFunc(handler))
-	// router.HandleFunc("/claims", getAllClaims).Methods("GET")
-	http.Handle("/claims/", http.HandlerFunc(getAllClaims))
-	// http.Handle("/velox.js", velox.JS)
-	// http.Handle("/sync", velox.SyncHandler(foo))
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(indexhtml)
-	})
-	//listen!
+	// stream := eventsource.NewStream()
 
-	//listen!
+	clients = make(map[*sse.Client]bool)
+	// Asynchronously send event to all clients every two seconds
+	ticker := time.NewTicker(time.Second * 2)
+	go func() {
+		for range ticker.C {
+			i := rand.Intn(len(claims))
+			tc := claims[i]
+			claims[i].Active = !tc.Active
+			updatedClaim := fmt.Sprintf("{id: '%s', active: %t}", tc.ID, tc.Active)
+			msg := sse.Msg{
+				Event: "claimUpdate",
+				Data:  updatedClaim,
+			}
+			for client := range clients {
+				// Send the message to this client
+				client.Send(msg)
+			}
+		}
+	}()
+
+	http.Handle("/claims/", http.HandlerFunc(getAllClaims))
+	http.HandleFunc("/", eventHandler)
+
 	log.Printf("Listening on 8000...")
 	log.Fatal(http.ListenAndServe(":8000", nil))
-}
+	// log.Fatal(http.ListenAndServe(":8080", stream))
 
-var indexhtml = []byte(`
-<div>Status: <b id="status">disconnected</b></div>
-<pre id="example"></pre>
-<script src="/velox.js"></script>
-<script>
-var foo = {};
-var v = velox("/sync", foo);
-v.onchange = function(isConnected) {
-	document.querySelector("#status").innerHTML = isConnected ? "connected" : "disconnected";
-};
-v.onupdate = function() {
-	document.querySelector("#example").innerHTML = JSON.stringify(foo, null, 2);
-};
-</script>
-`)
+}
