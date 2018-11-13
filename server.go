@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -24,25 +25,6 @@ type Claim struct {
 
 var claims []Claim
 var clients map[*sse.Client]bool
-
-// func httpHandler(w http.ResponseWriter, req *http.Request) {
-// 	// data can be a primitive like a string, an integer or a float
-// 	sse.Encode(w, sse.Event{
-// 		Event: "message",
-// 		Data:  "some data\nmore data",
-// 	})
-
-// 	// also a complex type, like a map, a struct or a slice
-// 	sse.Encode(w, sse.Event{
-// 		Id:    "124",
-// 		Event: "message",
-// 		Data: map[string]interface{}{
-// 			"user":    "manu",
-// 			"date":    time.Now().Unix(),
-// 			"content": "hi!",
-// 		},
-// 	})
-// }
 
 func eventHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
@@ -66,12 +48,32 @@ func enableCors(w *http.ResponseWriter) {
 }
 
 func getAllClaims(w http.ResponseWriter, r *http.Request) {
-	enableCors(&w)
 	json.NewEncoder(w).Encode(claims)
 }
 
+func updateClaim(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	// jsonStr := string(body)
+	fmt.Println(json.Unmarshal(body, json.MarshalIndent))
+	// fmt.Println(json.MarshalIndent(jsonStr))
+	// fmt.Println(json.MarshalIndent(body))
+
+	fmt.Println(r.Method)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	claimUpdate := fmt.Sprintf("{ \"id\": \"%s\", \"active\": %t }", string(body), false)
+	msg := sse.Msg{
+		Event: "claimUpdate",
+		Data:  claimUpdate,
+	}
+	for client := range clients {
+		client.Send(msg)
+	}
+}
+
 func main() {
-	// router := mux.NewRouter()
 	claims = append(claims, Claim{ID: "162244ae-c0e6-4468-b9e6-b42abdec31f3", CompanyName: "Prabhupada", BatchDate: "2018-10-31T01:50:45Z", BilledAmt: 4020.03, Active: false})
 	claims = append(claims, Claim{ID: "bcd64286-8209-4078-b5ad-3e87abdd88c4", CompanyName: "Yakidoo", BatchDate: "2017-12-12T06:29:54Z", BilledAmt: 2576.37, Active: false})
 	claims = append(claims, Claim{ID: "fbe62e94-6c3d-4702-ac5b-4397b51452a7", CompanyName: "Pixope", BatchDate: "2018-05-07T00:39:54Z", BilledAmt: 1403.46, Active: false})
@@ -93,17 +95,15 @@ func main() {
 	claims = append(claims, Claim{ID: "75d75870-ec57-4da0-a918-45e4e24f5e37", CompanyName: "Realmix", BatchDate: "2018-02-05T14:55:27Z", BilledAmt: 1476.42, Active: false})
 	claims = append(claims, Claim{ID: "995b37e8-1800-49ec-94a6-97c49ca22262", CompanyName: "Flipbug", BatchDate: "2018-05-23T03:33:54Z", BilledAmt: 4573.01, Active: false})
 
-	// stream := eventsource.NewStream()
-
 	clients = make(map[*sse.Client]bool)
-	// Asynchronously send event to all clients every two seconds
-	ticker := time.NewTicker(time.Second * 2)
+
+	ticker := time.NewTicker(time.Second * 10)
 	go func() {
 		for range ticker.C {
 			i := rand.Intn(len(claims))
-			tc := claims[i]
+			tc := claims[i] // TargetClaim
 			claims[i].Active = !tc.Active
-			updatedClaim := fmt.Sprintf("{id: '%s', active: %t}", tc.ID, tc.Active)
+			updatedClaim := fmt.Sprintf("{ \"id\": \"%s\", \"active\": %t }", tc.ID, tc.Active)
 			msg := sse.Msg{
 				Event: "claimUpdate",
 				Data:  updatedClaim,
@@ -115,11 +115,12 @@ func main() {
 		}
 	}()
 
-	http.Handle("/claims/", http.HandlerFunc(getAllClaims))
-	http.HandleFunc("/", eventHandler)
+	http.HandleFunc("/api/claims", getAllClaims)
+	http.HandleFunc("/api/update-claim", updateClaim)
+	http.HandleFunc("/api/stream/", eventHandler)
 
 	log.Printf("Listening on 8000...")
-	log.Fatal(http.ListenAndServe(":8000", nil))
-	// log.Fatal(http.ListenAndServe(":8080", stream))
 
+	// handler := cors.Default().Handler(mux)
+	http.ListenAndServe(":8000", nil)
 }
